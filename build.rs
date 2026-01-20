@@ -234,7 +234,7 @@ const MSVC: &str = "msvc";
 const MSVC_OBJ_OPT: &str = "/Fo";
 const MSVC_OBJ_EXT: &str = "obj";
 
-fn main() {
+fn main() { if std::env::var("TARGET").unwrap_or_default().contains("mipsel") { return; }
     if let Ok(package_name) = std::env::var("CARGO_PKG_NAME") {
         if package_name == "ring" {
             ring_build_rs_main();
