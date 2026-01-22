@@ -39,7 +39,13 @@
 #elif defined(__riscv) && __SIZEOF_POINTER__ == 8
 #define OPENSSL_64_BIT
 #elif defined(__wasm__)
-#define OPENSSL_32_BIT
+// #define OPENSSL_32_BIT
+// #elif defined(__MIPSEL__) && !defined(__LP64__)
+// #define OPENSSL_32_BIT
+// #define OPENSSL_MIPS
+// #elif defined(__MIPSEL__) && defined(__LP64__)
+// #define OPENSSL_64_BIT
+// #define OPENSSL_MIPS64
 // All of following architectures are only supported when `__BYTE_ORDER__` can be used to detect
 // endianness (in crypto/internal.h).
 #elif !defined(__BYTE_ORDER__)
