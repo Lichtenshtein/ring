@@ -14,15 +14,14 @@
 
 use ring::{digest, test, test_file};
 
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+use wasm_bindgen_test::{wasm_bindgen_test as test, wasm_bindgen_test_configure};
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 wasm_bindgen_test_configure!(run_in_browser);
 
 /// Test vectors from BoringSSL, Go, and other sources.
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn digest_misc() {
     test::run(test_file!("digest_tests.txt"), |section, test_case| {
         assert_eq!(section, "");
@@ -47,135 +46,6 @@ fn digest_misc() {
     });
 }
 
-mod digest_shavs {
-    use ring::{digest, test};
-
-    fn run_known_answer_test(digest_alg: &'static digest::Algorithm, test_file: test::File) {
-        let section_name = &format!("L = {}", digest_alg.output_len);
-        test::run(test_file, |section, test_case| {
-            assert_eq!(section_name, section);
-            let len_bits = test_case.consume_usize("Len");
-
-            let mut msg = test_case.consume_bytes("Msg");
-            // The "msg" field contains the dummy value "00" when the
-            // length is zero.
-            if len_bits == 0 {
-                assert_eq!(msg, &[0u8]);
-                msg.truncate(0);
-            }
-
-            assert_eq!(msg.len() * 8, len_bits);
-            let expected = test_case.consume_bytes("MD");
-            let actual = digest::digest(digest_alg, &msg);
-            assert_eq!(&expected, &actual.as_ref());
-
-            Ok(())
-        });
-    }
-
-    macro_rules! shavs_tests {
-        ( $file_name:ident, $algorithm_name:ident ) => {
-            #[allow(non_snake_case)]
-            mod $algorithm_name {
-                use super::{run_known_answer_test, run_monte_carlo_test};
-                use ring::{digest, test_file};
-
-                #[cfg(target_arch = "wasm32")]
-                use wasm_bindgen_test::wasm_bindgen_test;
-
-                #[test]
-                #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-                fn short_msg_known_answer_test() {
-                    run_known_answer_test(
-                        &digest::$algorithm_name,
-                        test_file!(concat!(
-                            "../third_party/NIST/SHAVS/",
-                            stringify!($file_name),
-                            "ShortMsg.rsp"
-                        )),
-                    );
-                }
-
-                #[test]
-                #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-                fn long_msg_known_answer_test() {
-                    run_known_answer_test(
-                        &digest::$algorithm_name,
-                        test_file!(concat!(
-                            "../third_party/NIST/SHAVS/",
-                            stringify!($file_name),
-                            "LongMsg.rsp"
-                        )),
-                    );
-                }
-
-                #[test]
-                #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-                fn monte_carlo_test() {
-                    run_monte_carlo_test(
-                        &digest::$algorithm_name,
-                        test_file!(concat!(
-                            "../third_party/NIST/SHAVS/",
-                            stringify!($file_name),
-                            "Monte.rsp"
-                        )),
-                    );
-                }
-            }
-        };
-    }
-
-    fn run_monte_carlo_test(digest_alg: &'static digest::Algorithm, test_file: test::File) {
-        let section_name = &format!("L = {}", digest_alg.output_len);
-
-        let mut expected_count: isize = -1;
-        let mut seed = Vec::with_capacity(digest_alg.output_len);
-
-        test::run(test_file, |section, test_case| {
-            assert_eq!(section_name, section);
-
-            if expected_count == -1 {
-                seed.extend(test_case.consume_bytes("Seed"));
-                expected_count = 0;
-                return Ok(());
-            }
-
-            assert!(expected_count >= 0);
-            let actual_count = test_case.consume_usize("COUNT");
-            assert_eq!(expected_count as usize, actual_count);
-            expected_count += 1;
-
-            let expected_md = test_case.consume_bytes("MD");
-
-            let mut mds = Vec::with_capacity(4);
-            mds.push(seed.clone());
-            mds.push(seed.clone());
-            mds.push(seed.clone());
-            for _ in 0..1000 {
-                let mut ctx = digest::Context::new(digest_alg);
-                ctx.update(&mds[0]);
-                ctx.update(&mds[1]);
-                ctx.update(&mds[2]);
-                let md_i = ctx.finish();
-                let _ = mds.remove(0);
-                mds.push(Vec::from(md_i.as_ref()));
-            }
-            let md_j = mds.last().unwrap();
-            assert_eq!(&expected_md, md_j);
-            seed = md_j.clone();
-
-            Ok(())
-        });
-
-        assert_eq!(expected_count, 100);
-    }
-
-    shavs_tests!(SHA1, SHA1_FOR_LEGACY_USE_ONLY);
-    shavs_tests!(SHA256, SHA256);
-    shavs_tests!(SHA384, SHA384);
-    shavs_tests!(SHA512, SHA512);
-}
-
 /// Test some ways in which `Context::update` and/or `Context::finish`
 /// could go wrong by testing every combination of updating three inputs
 /// that vary from zero bytes to one byte larger than the block length.
@@ -184,11 +54,10 @@ mod digest_shavs {
 macro_rules! test_i_u_f {
     ( $test_name:ident, $alg:expr) => {
         #[cfg(not(debug_assertions))]
-        // TODO: #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
         #[test]
         fn $test_name() {
             let mut input = [0; (digest::MAX_BLOCK_LEN + 1) * 3];
-            let max = $alg.block_len + 1;
+            let max = $alg.block_len() + 1;
             for i in 0..(max * 3) {
                 input[i] = (i & 0xff) as u8;
             }
@@ -246,7 +115,6 @@ macro_rules! test_large_digest {
     ( $test_name:ident, $alg:expr, $len:expr, $expected:expr) => {
         #[cfg(not(debug_assertions))]
         #[test]
-        // TODO: #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
         fn $test_name() {
             let chunk = vec![123u8; 16 * 1024];
             let chunk_len = chunk.len() as u64;
@@ -316,7 +184,6 @@ test_large_digest!(
 //                            digest::SHA512_256, 256 / 8, [ ... ]);
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_fmt_algorithm() {
     assert_eq!("SHA1", &format!("{:?}", digest::SHA1_FOR_LEGACY_USE_ONLY));
     assert_eq!("SHA256", &format!("{:?}", digest::SHA256));
@@ -326,7 +193,6 @@ fn test_fmt_algorithm() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn digest_test_fmt() {
     assert_eq!(
         "SHA1:b7e23ec29af22b0b4e41da31e868d57226121c84",

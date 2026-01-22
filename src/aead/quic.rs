@@ -20,7 +20,6 @@ use crate::{
     aead::{aes, chacha},
     cpu, error, hkdf,
 };
-use core::convert::{TryFrom, TryInto};
 
 /// A key for generating QUIC Header Protection masks.
 pub struct HeaderProtectionKey {
@@ -145,12 +144,14 @@ pub static AES_256: Algorithm = Algorithm {
 };
 
 fn aes_init_128(key: &[u8], cpu_features: cpu::Features) -> Result<KeyInner, error::Unspecified> {
-    let aes_key = aes::Key::new(key, aes::Variant::AES_128, cpu_features)?;
+    let key = key.try_into().map_err(|_| error::Unspecified)?;
+    let aes_key = aes::Key::new(aes::KeyBytes::AES_128(key), cpu_features)?;
     Ok(KeyInner::Aes(aes_key))
 }
 
 fn aes_init_256(key: &[u8], cpu_features: cpu::Features) -> Result<KeyInner, error::Unspecified> {
-    let aes_key = aes::Key::new(key, aes::Variant::AES_256, cpu_features)?;
+    let key = key.try_into().map_err(|_| error::Unspecified)?;
+    let aes_key = aes::Key::new(aes::KeyBytes::AES_256(key), cpu_features)?;
     Ok(KeyInner::Aes(aes_key))
 }
 
@@ -171,9 +172,9 @@ pub static CHACHA20: Algorithm = Algorithm {
     id: AlgorithmID::CHACHA20,
 };
 
-fn chacha20_init(key: &[u8], _todo: cpu::Features) -> Result<KeyInner, error::Unspecified> {
+fn chacha20_init(key: &[u8], _cpu_features: cpu::Features) -> Result<KeyInner, error::Unspecified> {
     let chacha20_key: [u8; chacha::KEY_LEN] = key.try_into()?;
-    Ok(KeyInner::ChaCha20(chacha::Key::from(chacha20_key)))
+    Ok(KeyInner::ChaCha20(chacha::Key::new(chacha20_key)))
 }
 
 fn chacha20_new_mask(key: &KeyInner, sample: Sample) -> [u8; 5] {

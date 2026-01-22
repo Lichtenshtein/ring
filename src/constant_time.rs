@@ -24,26 +24,106 @@ pub fn verify_slices_are_equal(a: &[u8], b: &[u8]) -> Result<(), error::Unspecif
     if a.len() != b.len() {
         return Err(error::Unspecified);
     }
-    let result = unsafe { GFp_memcmp(a.as_ptr(), b.as_ptr(), a.len()) };
+    let result = unsafe { CRYPTO_memcmp(a.as_ptr(), b.as_ptr(), a.len()) };
     match result {
         0 => Ok(()),
         _ => Err(error::Unspecified),
     }
 }
 
-extern "C" {
-    fn GFp_memcmp(a: *const u8, b: *const u8, len: c::size_t) -> c::int;
+prefixed_extern! {
+    fn CRYPTO_memcmp(a: *const u8, b: *const u8, len: c::size_t) -> c::int;
+}
+
+pub(crate) fn xor<const N: usize>(mut a: [u8; N], b: [u8; N]) -> [u8; N] {
+    // `xor_assign_at_start()`, but avoiding relying on the compiler to
+    // optimize the slice iterators.
+    a.iter_mut().zip(b.iter()).for_each(|(a, b)| *a ^= *b);
+    a
+}
+
+/// XORs the first N bytes of `b` into `a`, where N is
+/// `core::cmp::min(a.len(), b.len())`.
+#[inline(always)]
+pub(crate) fn xor_assign_at_start<'a>(
+    a: impl IntoIterator<Item = &'a mut u8>,
+    b: impl IntoIterator<Item = &'a u8>,
+) {
+    a.into_iter().zip(b).for_each(|(a, b)| *a ^= *b);
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{bssl, error};
+    use super::*;
+    use crate::limb::LimbMask;
+    use crate::{bssl, error, rand};
 
     #[test]
     fn test_constant_time() -> Result<(), error::Unspecified> {
-        extern "C" {
+        prefixed_extern! {
             fn bssl_constant_time_test_main() -> bssl::Result;
         }
         Result::from(unsafe { bssl_constant_time_test_main() })
+    }
+
+    #[test]
+    fn constant_time_conditional_memcpy() -> Result<(), error::Unspecified> {
+        let rng = rand::SystemRandom::new();
+        for _ in 0..100 {
+            let mut out = rand::generate::<[u8; 256]>(&rng)?.expose();
+            let input = rand::generate::<[u8; 256]>(&rng)?.expose();
+
+            // Mask to 16 bits to make zero more likely than it would otherwise be.
+            let b = (rand::generate::<[u8; 1]>(&rng)?.expose()[0] & 0x0f) == 0;
+
+            let ref_in = input;
+            let ref_out = if b { input } else { out };
+
+            prefixed_extern! {
+                fn bssl_constant_time_test_conditional_memcpy(dst: &mut [u8; 256], src: &[u8; 256], b: LimbMask);
+            }
+            unsafe {
+                bssl_constant_time_test_conditional_memcpy(
+                    &mut out,
+                    &input,
+                    if b { LimbMask::True } else { LimbMask::False },
+                )
+            }
+            assert_eq!(ref_in, input);
+            assert_eq!(ref_out, out);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn constant_time_conditional_memxor() -> Result<(), error::Unspecified> {
+        let rng = rand::SystemRandom::new();
+        for _ in 0..256 {
+            let mut out = rand::generate::<[u8; 256]>(&rng)?.expose();
+            let input = rand::generate::<[u8; 256]>(&rng)?.expose();
+
+            // Mask to 16 bits to make zero more likely than it would otherwise be.
+            let b = (rand::generate::<[u8; 1]>(&rng)?.expose()[0] & 0x0f) != 0;
+
+            let ref_in = input;
+            let ref_out = if b { xor(out, ref_in) } else { out };
+
+            prefixed_extern! {
+                fn bssl_constant_time_test_conditional_memxor(dst: &mut [u8; 256], src: &[u8; 256], b: LimbMask);
+            }
+            unsafe {
+                bssl_constant_time_test_conditional_memxor(
+                    &mut out,
+                    &input,
+                    if b { LimbMask::True } else { LimbMask::False },
+                );
+            }
+
+            assert_eq!(ref_in, input);
+            assert_eq!(ref_out, out);
+        }
+
+        Ok(())
     }
 }

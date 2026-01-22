@@ -22,12 +22,12 @@
 //
 // Unlike the BearSSL notes, we use u128 in the 64-bit implementation.
 
-use super::{super::Block, Xi};
-use crate::endian::BigEndian;
-use core::convert::TryInto;
+use super::{Xi, BLOCK_LEN};
+use crate::polyfill::{ArrayFlatten as _, ArraySplitMap as _};
 
 #[cfg(target_pointer_width = "64")]
 fn gcm_mul64_nohw(a: u64, b: u64) -> (u64, u64) {
+    #[allow(clippy::cast_possible_truncation)]
     #[inline(always)]
     fn lo(a: u128) -> u64 {
         a as u64
@@ -138,8 +138,8 @@ fn gcm_mul64_nohw(a: u64, b: u64) -> (u64, u64) {
     (lo ^ (mid << 32), hi ^ (mid >> 32))
 }
 
-pub(super) fn init(xi: [u64; 2]) -> super::u128 {
-    // We implement GHASH in terms of POLYVAL, as described in RFC8452. This
+pub(super) fn init(xi: [u64; 2]) -> super::U128 {
+    // We implement GHASH in terms of POLYVAL, as described in RFC 8452. This
     // avoids a shift by 1 in the multiplication, needed to account for bit
     // reversal losing a bit after multiplication, that is,
     // rev128(X) * rev128(Y) = rev255(X*Y).
@@ -165,10 +165,10 @@ pub(super) fn init(xi: [u64; 2]) -> super::u128 {
     hi ^= carry & 0xc200000000000000;
 
     // This implementation does not use the rest of |Htable|.
-    super::u128 { lo, hi }
+    super::U128 { hi, lo }
 }
 
-fn gcm_polyval_nohw(xi: &mut [u64; 2], h: super::u128) {
+fn gcm_polyval_nohw(xi: &mut [u64; 2], h: super::U128) {
     // Karatsuba multiplication. The product of |Xi| and |H| is stored in |r0|
     // through |r3|. Note there is no byte or bit reversal because we are
     // evaluating POLYVAL.
@@ -217,17 +217,18 @@ fn gcm_polyval_nohw(xi: &mut [u64; 2], h: super::u128) {
     *xi = [r2, r3];
 }
 
-pub(super) fn gmult(xi: &mut Xi, h: super::u128) {
+pub(super) fn gmult(xi: &mut Xi, h: super::U128) {
     with_swapped_xi(xi, |swapped| {
         gcm_polyval_nohw(swapped, h);
     })
 }
 
-pub(super) fn ghash(xi: &mut Xi, h: super::u128, input: &[u8]) {
+pub(super) fn ghash(xi: &mut Xi, h: super::U128, input: &[[u8; BLOCK_LEN]]) {
     with_swapped_xi(xi, |swapped| {
-        input.chunks_exact(16).for_each(|inp| {
-            swapped[0] ^= u64::from_be_bytes(inp[8..].try_into().unwrap());
-            swapped[1] ^= u64::from_be_bytes(inp[..8].try_into().unwrap());
+        input.iter().for_each(|&input| {
+            let input = input.array_split_map(u64::from_be_bytes);
+            swapped[0] ^= input[1];
+            swapped[1] ^= input[0];
             gcm_polyval_nohw(swapped, h);
         });
     });
@@ -235,8 +236,9 @@ pub(super) fn ghash(xi: &mut Xi, h: super::u128, input: &[u8]) {
 
 #[inline]
 fn with_swapped_xi(Xi(xi): &mut Xi, f: impl FnOnce(&mut [u64; 2])) {
-    let unswapped = xi.u64s_be_to_native();
+    let unswapped: [u64; 2] = xi.array_split_map(u64::from_be_bytes);
     let mut swapped: [u64; 2] = [unswapped[1], unswapped[0]];
     f(&mut swapped);
-    *xi = Block::from_u64_be(BigEndian::from(swapped[1]), BigEndian::from(swapped[0]))
+    let reswapped = [swapped[1], swapped[0]];
+    *xi = reswapped.map(u64::to_be_bytes).array_flatten()
 }

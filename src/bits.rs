@@ -12,38 +12,83 @@
 // OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-use crate::error;
+//! Bit lengths.
 
+use crate::{error, polyfill};
+
+/// The length of something, in bits.
+///
+/// This can represent a bit length that isn't a whole number of bytes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd)]
-pub struct BitLength(usize);
+#[repr(transparent)]
+pub struct BitLength<T = usize>(T);
+
+pub(crate) trait FromByteLen<T>: Sized {
+    /// Constructs a `BitLength` from the given length in bytes.
+    ///
+    /// Fails if `bytes * 8` is too large for a `T`.
+    fn from_byte_len(bytes: T) -> Result<Self, error::Unspecified>;
+}
+
+impl FromByteLen<usize> for BitLength<usize> {
+    #[inline]
+    fn from_byte_len(bytes: usize) -> Result<Self, error::Unspecified> {
+        match bytes.checked_mul(8) {
+            Some(bits) => Ok(Self(bits)),
+            None => Err(error::Unspecified),
+        }
+    }
+}
+
+impl FromByteLen<u64> for BitLength<u64> {
+    #[inline]
+    fn from_byte_len(bytes: u64) -> Result<Self, error::Unspecified> {
+        match bytes.checked_mul(8) {
+            Some(bits) => Ok(Self(bits)),
+            None => Err(error::Unspecified),
+        }
+    }
+}
+
+impl FromByteLen<usize> for BitLength<u64> {
+    #[inline]
+    fn from_byte_len(bytes: usize) -> Result<Self, error::Unspecified> {
+        let bytes = polyfill::u64_from_usize(bytes);
+        match bytes.checked_mul(8) {
+            Some(bits) => Ok(Self(bits)),
+            None => Err(error::Unspecified),
+        }
+    }
+}
+
+impl<T> BitLength<T> {
+    /// Constructs a `BitLength` from the given length in bits.
+    #[inline]
+    pub const fn from_bits(bits: T) -> Self {
+        Self(bits)
+    }
+}
+
+impl<T: Copy> BitLength<T> {
+    /// The number of bits this bit length represents, as the underlying type.
+    #[inline]
+    pub fn as_bits(self) -> T {
+        self.0
+    }
+}
 
 // Lengths measured in bits, where all arithmetic is guaranteed not to
 // overflow.
-impl BitLength {
-    #[inline]
-    pub const fn from_usize_bits(bits: usize) -> Self {
-        Self(bits)
-    }
-
-    #[inline]
-    pub fn from_usize_bytes(bytes: usize) -> Result<Self, error::Unspecified> {
-        let bits = bytes.checked_mul(8).ok_or(error::Unspecified)?;
-        Ok(Self::from_usize_bits(bits))
-    }
-
+impl BitLength<usize> {
     #[cfg(feature = "alloc")]
     #[inline]
-    pub fn half_rounded_up(&self) -> Self {
+    pub(crate) fn half_rounded_up(&self) -> Self {
         let round_up = self.0 & 1;
         Self((self.0 / 2) + round_up)
     }
 
-    #[inline]
-    pub fn as_usize_bits(&self) -> usize {
-        self.0
-    }
-
-    #[cfg(feature = "alloc")]
+    /// The bit length, rounded up to a whole number of bytes.
+    #[cfg(any(target_arch = "aarch64", feature = "alloc"))]
     #[inline]
     pub fn as_usize_bytes_rounded_up(&self) -> usize {
         // Equivalent to (self.0 + 7) / 8, except with no potential for
@@ -57,8 +102,29 @@ impl BitLength {
 
     #[cfg(feature = "alloc")]
     #[inline]
-    pub fn try_sub_1(self) -> Result<BitLength, error::Unspecified> {
+    pub(crate) fn try_sub_1(self) -> Result<Self, error::Unspecified> {
         let sum = self.0.checked_sub(1).ok_or(error::Unspecified)?;
-        Ok(BitLength(sum))
+        Ok(Self(sum))
+    }
+}
+
+impl BitLength<u64> {
+    pub fn to_be_bytes(self) -> [u8; 8] {
+        self.0.to_be_bytes()
+    }
+}
+
+#[cfg(any(target_pointer_width = "32", target_pointer_width = "64"))]
+impl From<BitLength<usize>> for BitLength<u64> {
+    fn from(BitLength(value): BitLength<usize>) -> Self {
+        BitLength(polyfill::u64_from_usize(value))
+    }
+}
+
+impl TryFrom<BitLength<u64>> for BitLength<core::num::NonZeroU64> {
+    type Error = <core::num::NonZeroU64 as TryFrom<u64>>::Error;
+
+    fn try_from(BitLength(value): BitLength<u64>) -> Result<Self, Self::Error> {
+        value.try_into().map(BitLength)
     }
 }

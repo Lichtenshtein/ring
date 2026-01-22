@@ -148,13 +148,13 @@ mod tests {
             "P-256",
             &agreement::ECDH_P256,
             &super::super::curve::P256,
-            &super::super::ops::p256::COMMON_OPS,
+            &ops::p256::COMMON_OPS,
         ),
         (
             "P-384",
             &agreement::ECDH_P384,
             &super::super::curve::P384,
-            &super::super::ops::p384::COMMON_OPS,
+            &ops::p384::COMMON_OPS,
         ),
     ];
 
@@ -183,7 +183,7 @@ mod tests {
             // getting that value from the PRNG.
             let mut n_bytes = [0u8; ec::SCALAR_MAX_BYTES];
             let num_bytes = curve.elem_scalar_seed_len;
-            limb::big_endian_from_limbs(&ops.n.limbs[..ops.num_limbs], &mut n_bytes[..num_bytes]);
+            limb::big_endian_from_limbs(ops.n_limbs(), &mut n_bytes[..num_bytes]);
             {
                 let n_bytes = &mut n_bytes[..num_bytes];
                 let rng = test::rand::FixedSliceRandom { bytes: n_bytes };
@@ -200,7 +200,7 @@ mod tests {
                     bytes: n_minus_1_bytes,
                 };
                 let key = agreement::EphemeralPrivateKey::generate(alg, &rng).unwrap();
-                assert_eq!(&n_minus_1_bytes[..], key.bytes());
+                assert_eq!(n_minus_1_bytes, key.bytes());
             }
 
             // Test that n + 1 also fails.
