@@ -19,8 +19,6 @@
 // another for the concrete logging implementation). Instead we use `eprintln!`
 // to log everything to stderr.
 
-let use_asm = false; // Override to disable assembly
-
 use std::{
     ffi::{OsStr, OsString},
     fs::{self, DirEntry},
