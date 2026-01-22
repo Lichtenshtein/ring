@@ -1,3 +1,4 @@
+#![allow(unused_attributes)]
 // Copyright 2015-2016 Brian Smith.
 //
 // Permission to use, copy, modify, and/or distribute this software for any
@@ -230,6 +231,9 @@ mod sysrand_chunk {
 
         #[cfg(target_arch = "x86_64")]
         const SYS_GETRANDOM: c_long = 318;
+
+        #[cfg(any(target_arch = "mips", target_arch = "mipsel"))]
+        const SYS_GETRANDOM: c_long = 4353;
 
         let chunk_len: c::size_t = dest.len();
         let r = unsafe { libc::syscall(SYS_GETRANDOM, dest.as_mut_ptr(), chunk_len, 0) };
